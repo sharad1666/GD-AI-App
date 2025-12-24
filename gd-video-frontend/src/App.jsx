@@ -1,15 +1,29 @@
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useState } from "react";
-import Lobby from "./components/Lobby";
-import VideoRoom from "./components/VideoRoom";
+import Lobby from "./pages/Lobby";
+import VideoRoom from "./pages/VideoRoom";
 
-function App() {
+export default function App() {
   const [session, setSession] = useState(null);
 
-  if (!session) {
-    return <Lobby onJoin={setSession} />;
-  }
-
-  return <VideoRoom session={session} />;
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route
+          path="/"
+          element={<Lobby setSession={setSession} />}
+        />
+        <Route
+          path="/room"
+          element={
+            session ? (
+              <VideoRoom session={session} />
+            ) : (
+              <Lobby setSession={setSession} />
+            )
+          }
+        />
+      </Routes>
+    </BrowserRouter>
+  );
 }
-
-export default App;
