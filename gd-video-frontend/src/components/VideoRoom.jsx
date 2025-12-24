@@ -1,37 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 
 /* ================================
-   STUN / TURN CONFIG
+   BACKEND CONFIG (PRODUCTION)
+================================ */
+const BACKEND_BASE_URL = "https://gd-ai-app.onrender.com";
+const WS_URL = "wss://gd-ai-app.onrender.com/ws";
+
+/* ================================
+   STUN CONFIG
 ================================ */
 const servers = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" }
-    // TURN can be added later
-  ],
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
 
 export default function VideoRoom() {
-  /* ================================
-     REFS
-  ================================ */
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const peerRef = useRef(null);
   const socketRef = useRef(null);
-  const localStreamRef = useRef(null);
 
-  /* ================================
-     STATE
-  ================================ */
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingTimeMs, setSpeakingTimeMs] = useState(0);
   const [speakingTurns, setSpeakingTurns] = useState(0);
   const [transcript, setTranscript] = useState("");
   const [wordCount, setWordCount] = useState(0);
 
-  /* ================================
-     INIT WEBRTC + SOCKET
-  ================================ */
   useEffect(() => {
     async function init() {
       /* 1️⃣ Camera + Mic */
@@ -41,11 +34,9 @@ export default function VideoRoom() {
       });
 
       localVideoRef.current.srcObject = stream;
-      localStreamRef.current = stream;
 
       /* 2️⃣ Peer Connection */
       peerRef.current = new RTCPeerConnection(servers);
-
       stream.getTracks().forEach(track =>
         peerRef.current.addTrack(track, stream)
       );
@@ -55,35 +46,26 @@ export default function VideoRoom() {
       };
 
       peerRef.current.onicecandidate = event => {
-        if (event.candidate) {
+        if (event.candidate && socketRef.current?.readyState === 1) {
           socketRef.current.send(
-            JSON.stringify({
-              type: "ice",
-              candidate: event.candidate,
-            })
+            JSON.stringify({ type: "ice", candidate: event.candidate })
           );
         }
       };
 
       /* 3️⃣ WebSocket Signaling */
-      socketRef.current = new WebSocket("ws://localhost:8080/ws");
+      socketRef.current = new WebSocket(WS_URL);
 
       socketRef.current.onopen = async () => {
         socketRef.current.send(
-          JSON.stringify({
-            type: "join",
-            roomId: "gd-room-1",
-          })
+          JSON.stringify({ type: "join", roomId: "gd-room-1" })
         );
 
         const offer = await peerRef.current.createOffer();
         await peerRef.current.setLocalDescription(offer);
 
         socketRef.current.send(
-          JSON.stringify({
-            type: "offer",
-            offer,
-          })
+          JSON.stringify({ type: "offer", offer })
         );
       };
 
@@ -94,12 +76,8 @@ export default function VideoRoom() {
           await peerRef.current.setRemoteDescription(data.offer);
           const answer = await peerRef.current.createAnswer();
           await peerRef.current.setLocalDescription(answer);
-
           socketRef.current.send(
-            JSON.stringify({
-              type: "answer",
-              answer,
-            })
+            JSON.stringify({ type: "answer", answer })
           );
         }
 
@@ -115,9 +93,7 @@ export default function VideoRoom() {
       /* 4️⃣ Active Speaker Detection */
       const audioContext = new AudioContext();
       const analyser = audioContext.createAnalyser();
-      audioContext
-        .createMediaStreamSource(stream)
-        .connect(analyser);
+      audioContext.createMediaStreamSource(stream).connect(analyser);
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
       let speakingStart = null;
@@ -141,21 +117,17 @@ export default function VideoRoom() {
       }, 300);
 
       /* 5️⃣ Live Transcription */
-      const SR =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
-
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (SR) {
         const recognition = new SR();
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = "en-US";
 
         recognition.onresult = event => {
           let text = "";
           for (let i = event.resultIndex; i < event.results.length; i++) {
             text += event.results[i][0].transcript;
           }
-
           setTranscript(text);
           setWordCount(text.trim().split(/\s+/).length);
         };
@@ -168,11 +140,11 @@ export default function VideoRoom() {
   }, []);
 
   /* ================================
-     END MEETING → AI EVALUATION
+     END MEETING → AI REPORT
   ================================ */
   const endMeeting = async () => {
-    const response = await fetch(
-      "http://localhost:8080/api/evaluation/report",
+    const res = await fetch(
+      `${BACKEND_BASE_URL}/api/evaluation/report`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -186,16 +158,16 @@ export default function VideoRoom() {
       }
     );
 
-    const report = await response.json();
+    const report = await res.json();
     alert(`Final GD Score: ${report.finalScore.toFixed(2)}`);
   };
 
   /* ================================
-     DOWNLOAD PDF REPORT
+     DOWNLOAD PDF
   ================================ */
   const downloadPdf = async () => {
     const res = await fetch(
-      "http://localhost:8080/api/evaluation/report/pdf",
+      `${BACKEND_BASE_URL}/api/evaluation/report/pdf`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -218,12 +190,9 @@ export default function VideoRoom() {
     a.click();
   };
 
-  /* ================================
-     UI
-  ================================ */
   return (
     <div style={styles.container}>
-      <h2 style={styles.title}>GD AI Platform</h2>
+      <h2>GD AI Platform</h2>
 
       <div style={styles.videoRow}>
         <video
@@ -233,12 +202,9 @@ export default function VideoRoom() {
           playsInline
           style={{
             ...styles.video,
-            border: isSpeaking
-              ? "4px solid #00ff88"
-              : "4px solid #333",
+            border: isSpeaking ? "4px solid #00ff88" : "4px solid #333",
           }}
         />
-
         <video
           ref={remoteVideoRef}
           autoPlay
@@ -275,9 +241,6 @@ const styles = {
     textAlign: "center",
     paddingTop: "20px",
   },
-  title: {
-    marginBottom: "20px",
-  },
   videoRow: {
     display: "flex",
     justifyContent: "center",
@@ -300,7 +263,6 @@ const styles = {
     display: "flex",
     justifyContent: "center",
     gap: "15px",
-    marginTop: "10px",
   },
   btn: {
     padding: "10px 18px",
