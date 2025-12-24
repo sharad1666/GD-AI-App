@@ -1,51 +1,78 @@
 package com.gdai.backend.websocket;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class SignalingHandler extends TextWebSocketHandler {
 
-    private static final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
-    private static final Map<String, String> sessionRoomMap = new ConcurrentHashMap<>();
+    private static final Map<String, Set<WebSocketSession>> rooms = new ConcurrentHashMap<>();
     private static final ObjectMapper mapper = new ObjectMapper();
 
     @Override
-    public void afterConnectionEstablished(WebSocketSession session) {
-        sessions.put(session.getId(), session);
-        System.out.println("Connected: " + session.getId());
+    public void handleTextMessage(WebSocketSession session, TextMessage message)
+            throws Exception {
+
+        JsonNode msg = mapper.readTree(message.getPayload());
+        String type = msg.get("type").asText();
+
+        switch (type) {
+            case "join" -> handleJoin(session, msg);
+            case "offer", "answer", "ice" -> forwardMessage(session, msg);
+        }
     }
 
-    @Override
-    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
-        Map<String, Object> payload =
-                mapper.readValue(message.getPayload(), Map.class);
+    private void handleJoin(WebSocketSession session, JsonNode msg) throws Exception {
+        String roomId = msg.get("roomId").asText();
+        rooms.putIfAbsent(roomId, ConcurrentHashMap.newKeySet());
+        Set<WebSocketSession> users = rooms.get(roomId);
 
-        String type = (String) payload.get("type");
-
-        if ("join".equals(type)) {
-            sessionRoomMap.put(session.getId(), (String) payload.get("roomId"));
-            return;
+        // Send existing users to new user
+        List<String> existing = new ArrayList<>();
+        for (WebSocketSession s : users) {
+            existing.add(s.getId());
         }
 
-        String roomId = sessionRoomMap.get(session.getId());
-        if (roomId == null) return;
+        session.sendMessage(new TextMessage(
+                mapper.writeValueAsString(Map.of(
+                        "type", "existing-users",
+                        "users", existing
+                ))
+        ));
 
-        for (String id : sessions.keySet()) {
-            if (!id.equals(session.getId())
-                    && roomId.equals(sessionRoomMap.get(id))) {
-                sessions.get(id).sendMessage(message);
+        // Notify others
+        for (WebSocketSession s : users) {
+            s.sendMessage(new TextMessage(
+                    mapper.writeValueAsString(Map.of(
+                            "type", "new-user",
+                            "userId", session.getId()
+                    ))
+            ));
+        }
+
+        users.add(session);
+    }
+
+    private void forwardMessage(WebSocketSession from, JsonNode msg) throws Exception {
+        String to = msg.get("to").asText();
+        for (Set<WebSocketSession> room : rooms.values()) {
+            for (WebSocketSession s : room) {
+                if (s.getId().equals(to)) {
+                    ((ObjectNode) msg).put("from", from.getId());
+                    s.sendMessage(new TextMessage(mapper.writeValueAsString(msg)));
+                    return;
+                }
             }
         }
     }
 
     @Override
-    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        sessions.remove(session.getId());
-        sessionRoomMap.remove(session.getId());
-        System.out.println("Disconnected: " + session.getId());
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus status)
+            throws Exception {
+        rooms.values().forEach(room -> room.remove(session));
     }
 }
