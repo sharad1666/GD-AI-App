@@ -1,65 +1,100 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
-export default function Lobby({ onJoin }) {
+export default function Lobby({ setSession }) {
   const [name, setName] = useState("");
   const [roomId, setRoomId] = useState("");
+  const navigate = useNavigate();
 
-  const join = () => {
-    if (!name || !roomId) {
-      alert("Enter name and room ID");
+  const joinRoom = () => {
+    if (!name.trim() || !roomId.trim()) {
+      alert("Please enter your name and room ID");
       return;
     }
-    onJoin({ name, roomId });
+
+    setSession({
+      name: name.trim(),
+      roomId: roomId.trim(),
+    });
+
+    navigate("/room");
   };
 
   return (
     <div style={styles.container}>
-      <h2>Join Group Discussion</h2>
+      <div style={styles.card}>
+        <h2 style={styles.title}>GD AI Platform</h2>
 
-      <input
-        placeholder="Your Name or Email"
-        value={name}
-        onChange={e => setName(e.target.value)}
-        style={styles.input}
-      />
+        <input
+          style={styles.input}
+          placeholder="Enter your name"
+          value={name}
+          onChange={e => setName(e.target.value)}
+        />
 
-      <input
-        placeholder="Room ID (e.g. gd-101)"
-        value={roomId}
-        onChange={e => setRoomId(e.target.value)}
-        style={styles.input}
-      />
+        <input
+          style={styles.input}
+          placeholder="Enter Room ID"
+          value={roomId}
+          onChange={e => setRoomId(e.target.value)}
+        />
 
-      <button onClick={join} style={styles.btn}>
-        Join Room
-      </button>
+        <button style={styles.btn} onClick={joinRoom}>
+          Join Meeting
+        </button>
+
+        <p style={styles.hint}>
+          Ask the host for the Room ID
+        </p>
+      </div>
     </div>
   );
 }
 
+/* ================================
+   STYLES (Piano Black + Green)
+================================ */
 const styles = {
   container: {
-    background: "#000",
-    color: "#00ff88",
-    height: "100vh",
+    minHeight: "100vh",
+    background: "#0b0b0b",
     display: "flex",
-    flexDirection: "column",
-    justifyContent: "center",
     alignItems: "center",
-    gap: "15px",
+    justifyContent: "center",
+    color: "#00ff88",
+  },
+  card: {
+    width: "320px",
+    background: "#111",
+    padding: "24px",
+    borderRadius: "12px",
+    boxShadow: "0 0 20px rgba(0,255,136,0.2)",
+    textAlign: "center",
+  },
+  title: {
+    marginBottom: "20px",
   },
   input: {
+    width: "100%",
     padding: "10px",
-    width: "250px",
-    background: "#111",
+    marginBottom: "12px",
+    borderRadius: "6px",
+    border: "1px solid #333",
+    background: "#000",
     color: "#00ff88",
-    border: "1px solid #00ff88",
   },
   btn: {
-    padding: "10px 20px",
+    width: "100%",
+    padding: "10px",
     background: "#00ff88",
     border: "none",
-    cursor: "pointer",
+    borderRadius: "6px",
     fontWeight: "bold",
+    cursor: "pointer",
+  },
+  hint: {
+    marginTop: "12px",
+    fontSize: "12px",
+    color: "#aaa",
   },
 };
