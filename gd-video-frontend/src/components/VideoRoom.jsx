@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 
+/* ================================
+   CONFIG
+================================ */
 const WS_URL = "wss://gd-ai-app.onrender.com/ws";
-const API = "https://gd-ai-app.onrender.com";
 
-const iceServers = {
+const ICE_SERVERS = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     {
       urls: "turn:global.relay.metered.ca:80",
-      username: "REPLACE",
-      credential: "REPLACE",
+      username: "REPLACE_WITH_YOUR_TURN_USERNAME",
+      credential: "REPLACE_WITH_YOUR_TURN_PASSWORD",
     },
   ],
 };
@@ -17,71 +19,108 @@ const iceServers = {
 export default function VideoRoom({ session }) {
   const { name, roomId } = session;
 
-  const socket = useRef();
-  const peers = useRef({});
-  const localStream = useRef();
-  const localVideo = useRef();
+  const socketRef = useRef(null);
+  const peersRef = useRef({});
+  const localStreamRef = useRef(null);
+  const localVideoRef = useRef(null);
 
-  const [videos, setVideos] = useState([]);
-  const [pinned, setPinned] = useState(null);
+  const [remoteVideos, setRemoteVideos] = useState([]);
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
-  const [transcript, setTranscript] = useState("");
+  const [pinnedId, setPinnedId] = useState(null);
 
+  /* ================================
+     INIT
+  ================================ */
   useEffect(() => {
-    start();
+    init();
+
+    return () => {
+      leaveCall(); // cleanup on unmount
+    };
   }, []);
 
-  async function start() {
+  async function init() {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: true,
       audio: true,
     });
 
-    localStream.current = stream;
-    localVideo.current.srcObject = stream;
+    localStreamRef.current = stream;
+    localVideoRef.current.srcObject = stream;
 
-    socket.current = new WebSocket(WS_URL);
+    socketRef.current = new WebSocket(WS_URL);
 
-    socket.current.onopen = () => {
-      socket.current.send(
-        JSON.stringify({ type: "join", roomId, name })
+    socketRef.current.onopen = () => {
+      socketRef.current.send(
+        JSON.stringify({
+          type: "join",
+          roomId,
+          name,
+        })
       );
     };
 
-    socket.current.onmessage = async ({ data }) => {
+    socketRef.current.onmessage = async ({ data }) => {
       const msg = JSON.parse(data);
-      if (msg.type === "existing-users")
-        msg.users.forEach(id => createPeer(id, true));
-      if (msg.type === "new-user") createPeer(msg.userId, false);
-      if (msg.type === "offer") handleOffer(msg);
-      if (msg.type === "answer")
-        peers.current[msg.from].setRemoteDescription(msg.answer);
-      if (msg.type === "ice")
-        peers.current[msg.from].addIceCandidate(msg.candidate);
-    };
 
-    startTranscription();
+      if (msg.type === "existing-users") {
+        msg.users.forEach(id => createPeer(id, true));
+      }
+
+      if (msg.type === "new-user") {
+        createPeer(msg.userId, false);
+      }
+
+      if (msg.type === "offer") {
+        await handleOffer(msg);
+      }
+
+      if (msg.type === "answer") {
+        await peersRef.current[msg.from].setRemoteDescription(
+          msg.answer
+        );
+      }
+
+      if (msg.type === "ice") {
+        await peersRef.current[msg.from].addIceCandidate(
+          msg.candidate
+        );
+      }
+
+      if (msg.type === "user-left") {
+        removePeer(msg.userId);
+      }
+    };
   }
 
-  async function createPeer(id, initiator) {
-    const pc = new RTCPeerConnection(iceServers);
-    peers.current[id] = pc;
+  /* ================================
+     PEER CREATION
+  ================================ */
+  async function createPeer(userId, initiator) {
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    peersRef.current[userId] = pc;
 
-    localStream.current.getTracks().forEach(t =>
-      pc.addTrack(t, localStream.current)
-    );
+    // Add BOTH audio + video tracks
+    localStreamRef.current.getTracks().forEach(track => {
+      pc.addTrack(track, localStreamRef.current);
+    });
 
-    pc.ontrack = e => {
-      setVideos(v =>
-        [...v.filter(x => x.id !== id), { id, stream: e.streams[0] }]
-      );
+    pc.ontrack = event => {
+      setRemoteVideos(prev => [
+        ...prev.filter(v => v.id !== userId),
+        { id: userId, stream: event.streams[0] },
+      ]);
     };
 
-    pc.onicecandidate = e => {
-      if (e.candidate) {
-        socket.current.send(
-          JSON.stringify({ type: "ice", to: id, candidate: e.candidate })
+    pc.onicecandidate = event => {
+      if (event.candidate) {
+        socketRef.current.send(
+          JSON.stringify({
+            type: "ice",
+            to: userId,
+            candidate: event.candidate,
+          })
         );
       }
     };
@@ -89,115 +128,177 @@ export default function VideoRoom({ session }) {
     if (initiator) {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      socket.current.send(
-        JSON.stringify({ type: "offer", to: id, offer })
+
+      socketRef.current.send(
+        JSON.stringify({
+          type: "offer",
+          to: userId,
+          offer,
+        })
       );
     }
   }
 
   async function handleOffer({ from, offer }) {
-    const pc = new RTCPeerConnection(iceServers);
-    peers.current[from] = pc;
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    peersRef.current[from] = pc;
 
-    localStream.current.getTracks().forEach(t =>
-      pc.addTrack(t, localStream.current)
-    );
+    localStreamRef.current.getTracks().forEach(track => {
+      pc.addTrack(track, localStreamRef.current);
+    });
 
-    pc.ontrack = e => {
-      setVideos(v =>
-        [...v.filter(x => x.id !== from), { id: from, stream: e.streams[0] }]
-      );
+    pc.ontrack = event => {
+      setRemoteVideos(prev => [
+        ...prev.filter(v => v.id !== from),
+        { id: from, stream: event.streams[0] },
+      ]);
+    };
+
+    pc.onicecandidate = event => {
+      if (event.candidate) {
+        socketRef.current.send(
+          JSON.stringify({
+            type: "ice",
+            to: from,
+            candidate: event.candidate,
+          })
+        );
+      }
     };
 
     await pc.setRemoteDescription(offer);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
-    socket.current.send(
-      JSON.stringify({ type: "answer", to: from, answer })
+    socketRef.current.send(
+      JSON.stringify({
+        type: "answer",
+        to: from,
+        answer,
+      })
     );
   }
 
-  /* 🎙 MIC */
+  /* ================================
+     CONTROLS
+  ================================ */
+
+  // 🎙 Mic toggle (SAFE)
   const toggleMic = () => {
-    localStream.current.getAudioTracks()[0].enabled = !micOn;
-    setMicOn(!micOn);
+    const audioTrack = localStreamRef.current
+      .getAudioTracks()[0];
+    audioTrack.enabled = !audioTrack.enabled;
+    setMicOn(audioTrack.enabled);
   };
 
-  /* 🎥 CAMERA */
-  const toggleCam = () => {
-    localStream.current.getVideoTracks()[0].enabled = !camOn;
-    setCamOn(!camOn);
+  // 🎥 Camera toggle
+  const toggleCamera = () => {
+    const videoTrack = localStreamRef.current
+      .getVideoTracks()[0];
+    videoTrack.enabled = !videoTrack.enabled;
+    setCamOn(videoTrack.enabled);
   };
 
-  /* 🖥 SCREEN SHARE */
+  // 🖥 Screen Share (VIDEO ONLY, AUDIO PRESERVED)
   const shareScreen = async () => {
-    const screen = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
-    });
-    const track = screen.getVideoTracks()[0];
-    Object.values(peers.current).forEach(pc => {
-      pc.getSenders().find(s => s.track.kind === "video").replaceTrack(track);
-    });
-    track.onended = () => toggleCam();
-  };
+    const screenStream =
+      await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+      });
 
-  /* 🧠 TRANSCRIPTION */
-  const startTranscription = () => {
-    const SR =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return;
-    const rec = new SR();
-    rec.continuous = true;
-    rec.onresult = e => {
-      let text = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        text += e.results[i][0].transcript;
-      }
-      setTranscript(text);
+    const screenTrack = screenStream.getVideoTracks()[0];
+
+    Object.values(peersRef.current).forEach(pc => {
+      const sender = pc
+        .getSenders()
+        .find(s => s.track && s.track.kind === "video");
+      sender.replaceTrack(screenTrack);
+    });
+
+    screenTrack.onended = () => {
+      const camTrack =
+        localStreamRef.current.getVideoTracks()[0];
+      Object.values(peersRef.current).forEach(pc => {
+        const sender = pc
+          .getSenders()
+          .find(s => s.track && s.track.kind === "video");
+        sender.replaceTrack(camTrack);
+      });
     };
-    rec.start();
   };
 
+  /* ================================
+     END CALL (LEAVE ROOM)
+  ================================ */
+  const leaveCall = () => {
+    // Close peers
+    Object.values(peersRef.current).forEach(pc => pc.close());
+    peersRef.current = {};
+
+    // Stop tracks
+    localStreamRef.current?.getTracks().forEach(t => t.stop());
+
+    // Notify server
+    if (socketRef.current?.readyState === 1) {
+      socketRef.current.send(
+        JSON.stringify({ type: "leave", roomId })
+      );
+    }
+
+    socketRef.current?.close();
+
+    // Redirect to lobby
+    window.location.reload();
+  };
+
+  /* ================================
+     UI
+  ================================ */
   return (
     <div style={styles.container}>
       <h3>Room: {roomId}</h3>
 
-      <div style={styles.videoGrid}>
+      <div style={styles.grid}>
         <video
-          ref={localVideo}
+          ref={localVideoRef}
           autoPlay
           muted
-          onClick={() => setPinned("local")}
-          style={styles.video(pinned === "local")}
+          playsInline
+          onClick={() => setPinnedId("local")}
+          style={styles.video(pinnedId === "local")}
         />
 
-        {videos.map(v => (
+        {remoteVideos.map(v => (
           <video
             key={v.id}
             autoPlay
             playsInline
             ref={el => el && (el.srcObject = v.stream)}
-            onClick={() => setPinned(v.id)}
-            style={styles.video(pinned === v.id)}
+            onClick={() => setPinnedId(v.id)}
+            style={styles.video(pinnedId === v.id)}
           />
         ))}
       </div>
 
       <div style={styles.controls}>
-        <button onClick={toggleMic}>{micOn ? "Mute" : "Unmute"}</button>
-        <button onClick={toggleCam}>{camOn ? "Camera Off" : "Camera On"}</button>
+        <button onClick={toggleMic}>
+          {micOn ? "Mute Mic" : "Unmute Mic"}
+        </button>
+        <button onClick={toggleCamera}>
+          {camOn ? "Camera Off" : "Camera On"}
+        </button>
         <button onClick={shareScreen}>Share Screen</button>
-      </div>
-
-      <div style={styles.transcript}>
-        <strong>Live Transcript</strong>
-        <p>{transcript}</p>
+        <button style={styles.endBtn} onClick={leaveCall}>
+          End Call
+        </button>
       </div>
     </div>
   );
 }
 
+/* ================================
+   STYLES
+================================ */
 const styles = {
   container: {
     background: "#000",
@@ -205,24 +306,24 @@ const styles = {
     minHeight: "100vh",
     padding: "10px",
   },
-  videoGrid: {
+  grid: {
     display: "flex",
     flexWrap: "wrap",
     gap: "10px",
   },
   video: pinned => ({
-    width: pinned ? "600px" : "200px",
+    width: pinned ? "600px" : "220px",
     border: pinned ? "3px solid #00ff88" : "1px solid #333",
     cursor: "pointer",
   }),
   controls: {
+    marginTop: "10px",
     display: "flex",
     gap: "10px",
-    marginTop: "10px",
   },
-  transcript: {
-    marginTop: "10px",
-    background: "#111",
-    padding: "10px",
+  endBtn: {
+    background: "red",
+    color: "white",
+    fontWeight: "bold",
   },
 };
