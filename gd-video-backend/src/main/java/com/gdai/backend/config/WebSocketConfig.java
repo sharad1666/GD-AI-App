@@ -1,6 +1,5 @@
-package com.gdai.backend.config;
+package com.gdai.backend.websocket;
 
-import com.gdai.backend.websocket.SignalingHandler;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.*;
 
