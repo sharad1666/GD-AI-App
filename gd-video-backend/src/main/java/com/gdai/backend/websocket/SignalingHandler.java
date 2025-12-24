@@ -3,6 +3,8 @@ package com.gdai.backend.websocket;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+
 import com.gdai.backend.dto.TranscriptMessage;
 import com.gdai.backend.service.TranscriptStore;
 
@@ -11,6 +13,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+
 
 public class SignalingHandler extends TextWebSocketHandler {
 
