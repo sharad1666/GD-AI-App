@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.gdai.backend.dto.TranscriptMessage;
+import com.gdai.backend.service.TranscriptStore;
 
 import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
@@ -23,6 +25,16 @@ public class SignalingHandler extends TextWebSocketHandler {
 
         JsonNode msg = mapper.readTree(message.getPayload());
         String type = msg.get("type").asText();
+        if ("transcript".equals(type)) {
+            TranscriptMessage transcript = new TranscriptMessage(
+        node.get("roomId").asText(),
+        node.get("userName").asText(),
+        node.get("text").asText(),
+        System.currentTimeMillis()
+        );
+
+        TranscriptStore.add(transcript);
+        }
 
         if ("join".equals(type)) {
             handleJoin(session, msg);
