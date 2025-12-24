@@ -1,14 +1,34 @@
-# Use lightweight Java 17 image
-FROM eclipse-temurin:17-jre
+# ================================
+# 1️⃣ Build stage (Maven)
+# ================================
+FROM maven:3.9.6-eclipse-temurin-17 AS build
 
-# Set working directory
 WORKDIR /app
 
-# Copy jar into container
-COPY target/*.jar app.jar
+# Copy pom.xml first (for dependency caching)
+COPY pom.xml .
 
-# Expose port (Render uses dynamic PORT)
+RUN mvn dependency:go-offline
+
+# Copy source code
+COPY src ./src
+
+# Build the jar
+RUN mvn clean package -DskipTests
+
+
+# ================================
+# 2️⃣ Runtime stage (Lightweight JRE)
+# ================================
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+
+# Copy jar from build stage
+COPY --from=build /app/target/*.jar app.jar
+
+# Expose port (Render injects PORT)
 EXPOSE 8080
 
-# Start Spring Boot
+# Run Spring Boot
 CMD ["java", "-jar", "app.jar"]
