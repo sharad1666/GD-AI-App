@@ -3,27 +3,30 @@ import { useEffect, useRef, useState } from "react";
 const WS_URL = "wss://gd-ai-app.onrender.com/ws";
 const API = "https://gd-ai-app.onrender.com";
 
-/* TURN is REQUIRED for distance users */
 const iceServers = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     {
       urls: "turn:global.relay.metered.ca:80",
-      username: "REPLACE_WITH_YOURS",
-      credential: "REPLACE_WITH_YOURS",
+      username: "REPLACE",
+      credential: "REPLACE",
     },
   ],
 };
 
-export default function VideoRoom() {
-  const localVideo = useRef();
+export default function VideoRoom({ session }) {
+  const { name, roomId } = session;
+
   const socket = useRef();
   const peers = useRef({});
-  const streamRef = useRef();
+  const localStream = useRef();
+  const localVideo = useRef();
 
   const [videos, setVideos] = useState([]);
-  const roomId =
-    new URLSearchParams(window.location.search).get("room") || "gd-1";
+  const [pinned, setPinned] = useState(null);
+  const [micOn, setMicOn] = useState(true);
+  const [camOn, setCamOn] = useState(true);
+  const [transcript, setTranscript] = useState("");
 
   useEffect(() => {
     start();
@@ -35,41 +38,39 @@ export default function VideoRoom() {
       audio: true,
     });
 
-    streamRef.current = stream;
+    localStream.current = stream;
     localVideo.current.srcObject = stream;
 
     socket.current = new WebSocket(WS_URL);
 
     socket.current.onopen = () => {
       socket.current.send(
-        JSON.stringify({ type: "join", roomId })
+        JSON.stringify({ type: "join", roomId, name })
       );
     };
 
     socket.current.onmessage = async ({ data }) => {
       const msg = JSON.parse(data);
-
-      if (msg.type === "existing-users") {
+      if (msg.type === "existing-users")
         msg.users.forEach(id => createPeer(id, true));
-      }
-
-      if (msg.type === "new-user") {
-        createPeer(msg.userId, false);
-      }
-
+      if (msg.type === "new-user") createPeer(msg.userId, false);
       if (msg.type === "offer") handleOffer(msg);
       if (msg.type === "answer")
         peers.current[msg.from].setRemoteDescription(msg.answer);
       if (msg.type === "ice")
         peers.current[msg.from].addIceCandidate(msg.candidate);
     };
+
+    startTranscription();
   }
 
   async function createPeer(id, initiator) {
     const pc = new RTCPeerConnection(iceServers);
     peers.current[id] = pc;
 
-    streamRef.current.getTracks().forEach(t => pc.addTrack(t, streamRef.current));
+    localStream.current.getTracks().forEach(t =>
+      pc.addTrack(t, localStream.current)
+    );
 
     pc.ontrack = e => {
       setVideos(v =>
@@ -98,20 +99,14 @@ export default function VideoRoom() {
     const pc = new RTCPeerConnection(iceServers);
     peers.current[from] = pc;
 
-    streamRef.current.getTracks().forEach(t => pc.addTrack(t, streamRef.current));
+    localStream.current.getTracks().forEach(t =>
+      pc.addTrack(t, localStream.current)
+    );
 
     pc.ontrack = e => {
       setVideos(v =>
         [...v.filter(x => x.id !== from), { id: from, stream: e.streams[0] }]
       );
-    };
-
-    pc.onicecandidate = e => {
-      if (e.candidate) {
-        socket.current.send(
-          JSON.stringify({ type: "ice", to: from, candidate: e.candidate })
-        );
-      }
     };
 
     await pc.setRemoteDescription(offer);
@@ -123,23 +118,111 @@ export default function VideoRoom() {
     );
   }
 
+  /* 🎙 MIC */
+  const toggleMic = () => {
+    localStream.current.getAudioTracks()[0].enabled = !micOn;
+    setMicOn(!micOn);
+  };
+
+  /* 🎥 CAMERA */
+  const toggleCam = () => {
+    localStream.current.getVideoTracks()[0].enabled = !camOn;
+    setCamOn(!camOn);
+  };
+
+  /* 🖥 SCREEN SHARE */
+  const shareScreen = async () => {
+    const screen = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+    });
+    const track = screen.getVideoTracks()[0];
+    Object.values(peers.current).forEach(pc => {
+      pc.getSenders().find(s => s.track.kind === "video").replaceTrack(track);
+    });
+    track.onended = () => toggleCam();
+  };
+
+  /* 🧠 TRANSCRIPTION */
+  const startTranscription = () => {
+    const SR =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const rec = new SR();
+    rec.continuous = true;
+    rec.onresult = e => {
+      let text = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        text += e.results[i][0].transcript;
+      }
+      setTranscript(text);
+    };
+    rec.start();
+  };
+
   return (
-    <div style={{ background: "#000", color: "#0f0", minHeight: "100vh" }}>
-      <h2>Room: {roomId}</h2>
+    <div style={styles.container}>
+      <h3>Room: {roomId}</h3>
 
-      <video ref={localVideo} autoPlay muted playsInline width={300} />
+      <div style={styles.videoGrid}>
+        <video
+          ref={localVideo}
+          autoPlay
+          muted
+          onClick={() => setPinned("local")}
+          style={styles.video(pinned === "local")}
+        />
 
-      <div style={{ display: "flex", flexWrap: "wrap" }}>
         {videos.map(v => (
           <video
             key={v.id}
             autoPlay
             playsInline
             ref={el => el && (el.srcObject = v.stream)}
-            width={300}
+            onClick={() => setPinned(v.id)}
+            style={styles.video(pinned === v.id)}
           />
         ))}
+      </div>
+
+      <div style={styles.controls}>
+        <button onClick={toggleMic}>{micOn ? "Mute" : "Unmute"}</button>
+        <button onClick={toggleCam}>{camOn ? "Camera Off" : "Camera On"}</button>
+        <button onClick={shareScreen}>Share Screen</button>
+      </div>
+
+      <div style={styles.transcript}>
+        <strong>Live Transcript</strong>
+        <p>{transcript}</p>
       </div>
     </div>
   );
 }
+
+const styles = {
+  container: {
+    background: "#000",
+    color: "#00ff88",
+    minHeight: "100vh",
+    padding: "10px",
+  },
+  videoGrid: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "10px",
+  },
+  video: pinned => ({
+    width: pinned ? "600px" : "200px",
+    border: pinned ? "3px solid #00ff88" : "1px solid #333",
+    cursor: "pointer",
+  }),
+  controls: {
+    display: "flex",
+    gap: "10px",
+    marginTop: "10px",
+  },
+  transcript: {
+    marginTop: "10px",
+    background: "#111",
+    padding: "10px",
+  },
+};
